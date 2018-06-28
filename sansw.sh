@@ -1,20 +1,37 @@
 #!/bin/bash
 #
-# Version 4.6, as CSV
+# Version 4.9, as CSV
 #
+# Usage: ./sansw.sh
 #
-# Usage: sansw.sh
+# The program inventory Brocade SAN switches and export to CSV file, with check configuration by Rules in file sansw_rep.txt
+# I use this script with freeware Stor2RRD (Storage and SAN monitoring tool), install to /home/stor2rrd/sansw/, owner stor2rrd.
 #
-# The program inventory Brocade SAN switches and export to CSV file.
-# All ports on SAN switch need have name: "PortName" OR "portNN" OR "extNN" OR ""
-# Support multi Fabric (A,B,C,D,...)
-# Added analitics based on Aliases and Host-to-Host
+# Uses config file - sansw.lst with structure: SwitchName IP Login Password Fabric_I Room
+#	ex.: san01 IP admin Password Fabric_A Room
+#	ex. if uses SSH public key: san01 IP Login SSH Fabric_A Room
+#
+# Rules:
+# 1) Alias need have all WWNs of device, for mirroring configuration on fabrics
+# 2) Alias and PortName (with connected cable) need have same Name
+# 3) All ports need have name: "AliasName" OR "portNN" OR "extNN" OR ""
+# 4) Zone need contain pier-to-pier connection, checking zones with non 2 aliases.
+# 5) Support multi Fabric_I (where "I" is char: A,B,C,D,...)
+# 6) Check unused aliases and zones
+# 7) Crosschek WWN, Alias, PortName
+# 8) Make map of Aliases with WWN, online marked ex. =WWN=
+# 9) Checking config for fabric by pair: A-B, C-D, ...
+#    Maked for splited SAN networks (by LSAN, logical isolation and others)
+#10) Checking for online WWNs of Host or Storage controller (by storsw_rep.csv) only in ONE Fabric
 #
 # 06/2018, Alexey Tarasenko, atarasenko@mail.ru
 #
+#
 # To_Do:
 # 1. exclude LSAN from processing, zonename: lsan_NAME
+# 2. get some info by SNMP, faster?
 #
+
 
 Fout="sansw_rep.csv";
 FoutXLS="sansw_rep.xls";
@@ -44,6 +61,22 @@ while read line; do
     index=$(($index+1))
 done < sansw.lst
 
+
+val2pos() {
+    local string="$1"
+    local delimiter="$2"
+    local value="$3"
+    local index=1
+    if [ -n "$string" ]; then
+        local part
+        while read -d "$delimiter" part; do
+            if [[ "$part" == "$value" ]]; then echo -n $index; break; fi
+            index=$(($index+1))
+        done <<< "$string"
+    fi
+}
+
+                                                                        
 trim() {
     local var="$*"
     # remove leading whitespace characters
@@ -52,6 +85,7 @@ trim() {
     var="${var%"${var##*[![:space:]]}"}"   
     echo -n "$var"
 }
+
 
 recomp() {
     local fout="$1"
@@ -82,6 +116,7 @@ recomp() {
     if [[ $buf != ""  ]]; then echo "$buf" | tr ' ' '\t' | tr -s '\t'  >> $fout; fi
     unset arrstr
 }
+
 
 swtype() {
     local var="$*"
@@ -546,6 +581,7 @@ do
     then
 	cat "$Ftmp.Fabric_$i.unused" >> $Ftmp
 	echo "" >> $Ftmp
+	echo "" >> $Ftmp
 	rm "$Ftmp.Fabric_$i.unused"
     fi
 
@@ -554,6 +590,7 @@ do
 	echo "WWN without Alias" >> $Ftmp
 	echo "-----------------" >> $Ftmp
 	cat "$Ftmp.Fabric_$i.wwnali" >> $Ftmp
+	echo "" >> $Ftmp
 	echo "" >> $Ftmp
 	rm "$Ftmp.Fabric_$i.wwnali"
     fi
@@ -564,6 +601,7 @@ do
 	echo "--------------------" >> $Ftmp
 	cat "$Ftmp.Fabric_$i.wwnname" >> $Ftmp
 	echo "" >> $Ftmp
+	echo "" >> $Ftmp
 	rm "$Ftmp.Fabric_$i.wwnname"
     fi
 
@@ -573,6 +611,7 @@ do
 	echo "--------------------" >> $Ftmp
 	cat "$Ftmp.Fabric_$i.portname" >> $Ftmp
 	echo "" >> $Ftmp
+	echo "" >> $Ftmp
 	rm "$Ftmp.Fabric_$i.portname"
     fi
 
@@ -581,6 +620,7 @@ do
 	echo "PortName not equal Alias" >> $Ftmp
 	echo "------------------------" >> $Ftmp
 	cat "$Ftmp.Fabric_$i.portali" >> $Ftmp
+	echo "" >> $Ftmp
 	echo "" >> $Ftmp
 	rm "$Ftmp.Fabric_$i.portali"
     fi
@@ -593,7 +633,7 @@ do
 	while read line; do
 	    zone=`echo "$line" | cut -f2`; zone=$( trim "$zone" )
 	    x=`echo "$line" | cut -f3 | sed -e 's/#/\n/g' | wc -l`
-	    if [[ $x -gt 2 ]]
+	    if [[ $x -gt 2 ]] || [[ $x -eq 1 ]]
 	    then
 		# check in effective configuration
 		y=`grep "$zone" "$Ftmp.Fabric_$i.zone" | wc -l`
@@ -609,9 +649,10 @@ do
 	x=`cat "$Ftmp.A" | wc -l`
 	if [[ $x -gt 0 ]]
 	then 
-	    echo "Zones contain more 2 Aliases (* effective)" >> $Ftmp
-	    echo "------------------------------------------" >> $Ftmp
+	    echo "Zones contain 1 or 3+ Aliases (* run_cfg)" >> $Ftmp
+	    echo "-----------------------------------------" >> $Ftmp
 	    cat "$Ftmp.A" >> $Ftmp
+	    echo "" >> $Ftmp
 	    echo "" >> $Ftmp
 	fi
 	
@@ -636,6 +677,7 @@ do
 		echo "-----------------------------------------" >> $Ftmp
 		cat "$Ftmp.C" >> $Ftmp
 		echo "" >> $Ftmp
+		echo "" >> $Ftmp
 	    fi
 	fi
 	
@@ -650,6 +692,7 @@ do
 		echo "Diff all Zones in Fabric_$i and Fabric_$ii" >> $Ftmp
 		echo "---------------------------------------" >> $Ftmp
 		cat "$Ftmp.C" >> $Ftmp
+		echo "" >> $Ftmp
 		echo "" >> $Ftmp
 	    fi
 	fi
@@ -666,6 +709,7 @@ do
 		echo "---------------------------------------------" >> $Ftmp
 		cat "$Ftmp.C" >> $Ftmp
 		echo "" >> $Ftmp
+		echo "" >> $Ftmp
 	    fi
 	fi
 	
@@ -676,6 +720,127 @@ do
 	unset ii
     fi
 
+    # Check online WWNs of ONE controller
+    #storsw.sh - Room,Name+,IP,Firmware+,Capacity,Used,Free,WWNs,Ctrl#+,Ctrl WWPN,Speed,Status+,Encl#+,Status+,Type,PN#,Serial#,Slots,Speed,Encl#+,Bay#+,Status+,Type,Mode,Size,Speed+,PN#,Serial#,Disk Group,Status+,Size,Free,Volume Name,Status+,Size,WWID+,Mapping,Disk Group,Func+,Host Name,Status+,Ports+,WWPN,Mapping
+    if [[ -f "$Ftmp.Fabric_$i.port_cfg" ]] && [[ -f "$Ftmp.Fabric_$i.alias_cfg" ]]
+    then 
+	echo "Online WWNs only in ONE Fabric" >> $Ftmp
+	echo "------------------------------" >> $Ftmp
+
+	if [[ -f "$Ftmp.Fabric_$i.onlyone" ]]; then rm "$Ftmp.Fabric_$i.onlyone"; fi
+	
+	storCSV=0
+	if [[ -f "../storsw/storsw_rep.csv" ]]
+	then
+	    storCSV=1
+	    title=$( cat "../storsw/storsw_rep.csv" | head -n 1 )
+	    pos=$(val2pos "$title" "," "Ctrl#+")
+	    posName=$(val2pos "$title" "," "Name+")
+	fi
+	while read line; do
+	    x=`echo "$line" | cut -f2`; x=$( trim "$x" )
+	    x="alias: $x"
+	    xl=${#x}
+	    if [[ $xl -lt 40 ]]; then x="${x}\t"; fi
+	    if [[ $xl -lt 32 ]]; then x="${x}\t"; fi
+	    if [[ $xl -lt 24 ]]; then x="${x}\t"; fi
+	    if [[ $xl -lt 16 ]]; then x="${x}\t"; fi
+	    if [[ $xl -lt 8  ]]; then x="${x}\t"; fi
+	    ctrl=""
+	    ii=`echo "$line" | cut -f3 | tr '#' '\n' | sort | tr '\n' ' '`; ii=$( trim "$ii" )
+	    declare -a ii="( $ii )"
+	    ywwns=${#ii[*]}
+	    for ((j=0; j < ${#ii[*]}; j++))
+	    do
+		#WWN in "${ii[$j]}"
+		iw=$( trim "${ii[$j]}" )
+		ic=`cat "$Ftmp.Fabric_$i.port_cfg" | grep "${ii[$j]}" | wc -l`
+		# if WWN is online
+		if [[ $ic -gt 0 ]]
+		then
+		    y=""
+		    if [[ $storCSV -eq 1 ]]; then y=`cat "../storsw/storsw_rep.csv" | grep "$iw" | cut -d, -f$pos | tr ' ' '_'`; fi
+		    # if WWN of WWPN storages controller
+		    if [[ "$y" != "" ]]
+		    then 
+			# Storage
+			yn=`cat "../storsw/storsw_rep.csv" | grep "$iw" | cut -d, -f$posName | tr ' ' '_'`
+			# for NetApp add claster dual controller identifier
+			if [[ ${#yn} -gt 5 ]] && [[ "${yn:0:5}" == "N6240" ]]; then y="${yn:(-1)}$y"; fi
+			ctrl="$ctrl $y"
+		    else
+			# Host
+			ctrl="$ctrl node0"
+		    fi
+    		fi
+		unset iw
+		unset ic
+	    done
+	    ctrl=$( trim "$ctrl" )
+	    ctrl0="$ctrl"
+	    
+	    #IBM Storwize
+	    # node1, node2
+	    #NetApp 7-mode
+	    ctrl=${ctrl//"A1A"/"node1"}; ctrl=${ctrl//"A1B"/"node1"}
+	    ctrl=${ctrl//"A0C"/"node2"}; ctrl=${ctrl//"A0D"/"node1"}
+	    ctrl=${ctrl//"B1A"/"node2"}; ctrl=${ctrl//"B1B"/"node2"}
+	    ctrl=${ctrl//"B0C"/"node2"}; ctrl=${ctrl//"B0D"/"node2"}
+	    #DotHill
+	    ctrl=${ctrl//"A0"/"node1"}; ctrl=${ctrl//"B0"/"node2"}
+	    ctrl=${ctrl//"A1"/"node1"}; ctrl=${ctrl//"B1"/"node2"}
+	    ctrl=${ctrl//"A2"/"node1"}; ctrl=${ctrl//"B2"/"node2"}
+	    #IBM DS5K, Dell PowerVolt
+	    ctrl=${ctrl//"Encl:0_Slot:0"/"node1"}; ctrl=${ctrl//"Encl:0_Slot:1"/"node2"}
+	    #Xyratex
+	    ctrl=${ctrl//"Controller:1"/"node1"}; ctrl=${ctrl//"Controller:2"/"node2"}
+	    
+	    # nothing do if no online WWNs
+	    if [[ "$ctrl" != "" ]]
+	    then
+		ishost=$( echo "$ctrl" | grep "node0" | wc -l )
+		yi=$( echo "$ctrl" | tr ' ' '\n' | wc -l )
+		yi2=$( echo "$ctrl" | tr ' ' '\n' | sort | uniq | wc -l )
+		ctrl2=$( echo "$ctrl" | tr ' ' '\n' | sort | uniq | tr '\n' ' ' ); ctrl2=$( trim "$ctrl2" )
+		if [[ $ishost -gt 0 ]]
+		then 
+		    # Hosts
+		    # if all or not *2 WWNs online
+		    if [[ $(($yi % 2)) -eq 0 ]] || [[ $ywwns -ne 2 ]]
+		    then 
+			#echo -e "${x}Host: $yi/${ywwns} $ctrl [$yi2 $ctrl2 : $ctrl0]" >> "$Ftmp.Fabric_$i.onlyone"
+			echo -e "${x}Host: $yi/${ywwns} $ctrl" >> "$Ftmp.Fabric_$i.onlyone"
+		    #else
+		    #	echo -e "${x}h_ok: $yi/${ywwns} $ctrl [$yi2 $ctrl2 : $ctrl0]" >> "$Ftmp.Fabric_$i.onlyone"
+		    fi
+		else
+		    # Storages
+		    if [[ $(($yi2 % 2)) -ne 0 ]]
+		    then 
+			#echo -e "${x}Stor: $yi/${ywwns} $ctrl2 [$yi2 $ctrl : $ctrl0]" >> "$Ftmp.Fabric_$i.onlyone"
+			echo -e "${x}Stor: $yi/${ywwns} $ctrl2" >> "$Ftmp.Fabric_$i.onlyone"
+		    #else
+		    #	echo -e "${x}s_ok: $yi/${ywwns} $ctrl2 [$yi2 $ctrl : $ctrl0]" >> "$Ftmp.Fabric_$i.onlyone"
+		    fi
+		fi
+	    fi
+
+	    unset x
+	    unset xl
+	    unset ii
+	    unset ctrl
+	done < "$Ftmp.Fabric_$i.alias_cfg"
+	
+	if [[ -f "$Ftmp.Fabric_$i.onlyone" ]]
+	then 
+	    cat "$Ftmp.Fabric_$i.onlyone" >> $Ftmp
+	    rm "$Ftmp.Fabric_$i.onlyone"
+    	    echo "" >> $Ftmp
+	    echo "" >> $Ftmp
+	fi
+    fi
+
+    # Make map of Aliases with WWN, online marked ex. =WWN=
     if [[ -f "$Ftmp.Fabric_$i.port_cfg" ]] && [[ -f "$Ftmp.Fabric_$i.alias_cfg" ]]
     then 
 	echo "Online WWN in Alias" >> $Ftmp
@@ -717,7 +882,9 @@ do
 	cat "$Ftmp.Fabric_$i.alias" >> $Ftmp
 	rm "$Ftmp.Fabric_$i.alias"
 	echo "" >> $Ftmp
+	echo "" >> $Ftmp
     fi
+
     
     if [[ -f "$Ftmp.Fabric_$i.zone" ]]; then rm "$Ftmp.Fabric_$i.zone"; fi
     if [[ -f "$Ftmp.Fabric_$i.alias_cfg" ]]; then rm "$Ftmp.Fabric_$i.alias_cfg"; fi
@@ -758,17 +925,18 @@ then
     echo " end"
 fi
 
-#if [[ -f "../smb/smbupload.sh" ]]
-#then
-#    echo "Upload to Inventory share.."
-#    eval "../smb/smbupload.sh sansw $Fout $FoutXLS $Fout2"
-#    echo "..end"
-#fi
-
-if [[ -f "../csv2mysql/csv2mysql.sh" ]]
+if [[ -f "../smb/smbupload.sh" ]]
 then
+    echo "Upload to Inventory share.."
+    eval "../smb/smbupload.sh sansw $Fout $FoutXLS $Fout2"
+    echo "..end"
+fi
+
+if [[ -f "../csv2mysql/csv2mysql.pl" ]]
+then
+    # Room,Fabric+,Switch Name+,Domen+,IP,Switch WWN,Model,Firmware,Serial#,Config,Port#+,Port Name,Speed+,Status,State,Type,WWN,WWPN,Alias,Zone,SFP#+,Wave+,Vendor,Serial#,Speed
     echo "Upload to MySQL base.."
-    eval "../csv2mysql/csv2mysql.pl sansw_rep.csv san \"Switch Name+,Port#+,WWN,Wave+,Speed,WWNP,Alias\" \"swname,pnum,wwn,wave,speed,wwnp,host\""
+    eval "../csv2mysql/csv2mysql.pl sansw_rep.csv san \"Switch Name+,Port#+,WWN,Wave+,Speed,WWPN,Alias\" \"swname,pnum,wwn,wave,speed,wwpn,host\""
     echo "..end"
 fi
 
@@ -776,3 +944,95 @@ if [[ -f $Ftmp ]]; then rm $Ftmp; fi
 if [[ -f "$Ftmp.sfp" ]]; then rm "$Ftmp.sfp"; fi
 if [[ -f "$Ftmp.isl" ]]; then rm "$Ftmp.isl"; fi
 
+###
+    #MIB-II (RFC1213-MIB)
+    #sysName - 1.3.6.1.2.1.1.5
+    #SW_MIB
+    #firmware - 1.3.6.1.4.1.1588.2.1.1.1.1.6.0
+    #SerialNumber - 1.3.6.1.4.1.1588.2.1.1.1.1.10.0
+    #swFCPortCapacity - 1.3.6.1.4.1.1588.2.1.1.1.6.1
+    
+    # Model
+    #$oid = ".1.3.6.1.2.1.47.1.1.1.1.2.1";     
+    
+    # Serialnumber
+    #$oid = ".1.3.6.1.2.1.47.1.1.1.1.11.1";     
+    #$oid = ".1.3.6.1.4.1.1588.2.1.1.1.1.10.0"; 
+    #SNMPv2-SMI::enterprises.1588.2.1.1.1.1.10.0 = STRING: "100979C" 
+
+    # Firmware version
+    #$oid = ".1.3.6.1.4.1.1588.2.1.1.1.1.6.0"; 
+    #SNMPv2-SMI::enterprises.1588.2.1.1.1.1.6.0 = STRING: "v6.2.2f" 
+
+    # Switch WWN
+    #SNMPv2-SMI::enterprises.1588.2.1.1.50.2.4.1.2.1 = Hex-STRING: 10 00 00 05 1E 02 F0 52
+
+    # check the physical port status
+    # result values from the switch:
+    # 1: noCard,      2: noTransceiver, 3: LaserFault
+    # 4: noLight,     5: noSync,        6: inSync,
+    # 7: portFault,   8: diagFault,     9: lockRef
+    #$oid = ".1.3.6.1.4.1.1588.2.1.1.1.6.2.1.3.nn";     
+    
+    # check the operational port status
+    # result values from the switch:
+    # 0: unknown,    1: online,   2: offline
+    # 3: testing,    4: faulty
+    #$oid = ".1.3.6.1.4.1.1588.2.1.1.1.6.2.1.4.nn"; 
+
+    # And now we try to get the partner WWN (thats pretty cool I think)
+    #$oid = ".1.3.6.1.4.1.1588.2.1.1.1.7.2.1.4.nn";     
+    #SNMPv2-SMI::enterprises.1588.2.1.1.1.7.2.1.4.1 = Hex-STRING: 10 00 00 00 C9 55 99 F1
+     #$oid = ".1.3.6.1.4.1.1588.2.1.1.1.7.2.1.6.nn";     
+     #SNMPv2-SMI::enterprises.1588.2.1.1.1.7.2.1.6.1 = Hex-STRING: 20 00 00 00 C9 55 99 F1
+    
+    # Port WWN
+    #1.3.6.1.4.1.1588.2.1.1.1.6.2.1.34
+
+    # Port ID
+    #1.3.6.1.4.1.1588.2.1.1.1.6.2.1.37
+    #SNMPv2-SMI::enterprises.1588.2.1.1.1.6.2.1.37.nn = STRING: "0" 
+
+    # Port speed
+    #1.3.6.1.4.1.1588.2.1.1.1.6.2.1.35
+    #one-GB   (1),
+    #two-GB   (2),
+    #auto-Negotiate (3),
+    #four-GB (4),
+    #eight-GB (5),
+    #ten-GB (6)
+
+    # Port Type
+    #1.3.6.1.4.1.1588.2.1.1.1.6.2.1.39
+    #unknown			(1),
+    #other			(2),
+    #FL-port			(3),  
+    #F-port			(4),  
+    #E-port			(5),  
+    #G-port			(6), 
+    #EX-port			(7)
+
+    # Name of port
+    #1.3.6.1.4.1.1588.2.1.1.1.6.2.1.36
+    #SNMPv2-SMI::enterprises.1588.2.1.1.1.6.2.1.36.nn = STRING: "Prod1_testdb2" 
+
+    # Port index
+    #SNMPv2-SMI::enterprises.1588.2.1.1.1.6.2.1.1.nn = INTEGER: 1 
+
+    # Fabric Watch licensed?
+    # 1 - swFwLicensed
+    # 2 - swFwNotLicensed
+    #$oid = ".1.3.6.1.4.1.1588.2.1.1.1.10.1.0";     
+    
+    # Operational Status
+    # The current operational status of the switch.
+    # The states are as follow:
+    # 1 - Online means the switch is accessible by an external Fibre Channel port
+    # 2 - Offline means the switch is not accessible
+    # 3 - Testing means the switch is in a built-in test mode and is not accessible
+    #     by an external Fibre Channel port
+    # 4- Faulty means the switch is not operational.
+    #$oid = ".1.3.6.1.4.1.1588.2.1.1.1.1.7.0";     
+###
+
+exit;
