@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Version 4.9, as CSV
+# Version 4.93, as CSV
 #
 # Usage: ./sansw.sh
 #
@@ -523,20 +523,18 @@ do
 	    echo "$part0,port${p_num},wwn: ${p_wwnd}" >> "$Ftmp.Fabric_$fab_id.port_cfg"
 	    
 	    # Alias
-	    if [[ "$p_ali" == "" ]]
-	    then 
+	    if [[ "$p_ali" == "" ]]; then 
 		echo "$part0,port${p_num},wwn: $p_wwnd,name: $p_name">> "$Ftmp.$Ffab.wwnali"
 	    fi
 	    # PortName
-	    if [[ "$p_name" == "" ]] || [[ "$p_name" == "port${p_num}" ]] || [[ "$p_name" == "ext${p_num}" ]]
-	    then 
+	    if [[ "$p_name" == "" ]] || [[ "$p_name" == "port${p_num}" ]] || [[ "$p_name" == "ext${p_num}" ]]; then 
 		echo "$part0,port${p_num},wwn: $p_wwnd,alias: $p_ali">> "$Ftmp.$Ffab.wwnname"
 	    fi
 
 	    # PortName not equal Alias
-	    if [[ "$p_ali" != "" ]] && [[ "$p_name" != "" ]] && [[ "$p_name" != "port${p_num}" ]] && [[ "$p_name" != "ext${p_num}" ]]
-	    then 
-		if [[ "$p_name" != "$p_ali" ]]; then echo "$part0,port${p_num},wwn: $p_wwnd,name: $p_name,alias: $p_ali">> "$Ftmp.$Ffab.portali"; fi
+	    if [[ "$p_ali" != "" ]] && [[ "$p_name" != "" ]] && [[ "$p_name" != "port${p_num}" ]] && [[ "$p_name" != "ext${p_num}" ]]; then 
+		if [[ "$p_name" != "$p_ali" ]]; then echo "$part0,port${p_num},wwn: $p_wwnd,name: $p_name,alias: $p_ali">> "$Ftmp.$Ffab.portali"
+		fi
 	    fi
 	fi
 
@@ -547,8 +545,7 @@ do
 	if [[ "$p_wwnd" == "" ]]
 	then
 	    # WWN
-	    if [[ "$p_name" != "port${p_num}" ]] && [[ "$p_name" != "ext${p_num}" ]]
-	    then 
+	    if [[ "$p_name" != "port${p_num}" ]] && [[ "$p_name" != "ext${p_num}" ]]; then 
 		echo "$part0,port${p_num},name: $p_name">> "$Ftmp.$Ffab.portname"
 	    fi
 	fi
@@ -568,66 +565,82 @@ do
     echo " end"
 done        
 unset sansw
-unset Fabric
 
 
 echo "" > $Fout2
-index=0
+fab_num=0
 for i in $fab_chars
 do
+    # continue if not in .lst or not processed
+    if [[ "${Fabric[$fab_num]}" == "" ]] || [[ "${Fabric[$fab_num]}" == "0" ]]; then continue; fi
+    
+    echo "Processing Fabric_$i:"
+    
     if [[ -f $Ftmp ]]; then rm $Ftmp; fi
     
     if [[ -f "$Ftmp.Fabric_$i.unused" ]]
     then
+	echo -n "Check unused Zones and Aliases in Fabric_$i..."
 	cat "$Ftmp.Fabric_$i.unused" >> $Ftmp
 	echo "" >> $Ftmp
 	echo "" >> $Ftmp
 	rm "$Ftmp.Fabric_$i.unused"
+	echo " end"
     fi
 
     if [[ -f "$Ftmp.Fabric_$i.wwnali" ]]
     then
+	echo -n "Check WWN without Alias in Fabric_$i..."
 	echo "WWN without Alias" >> $Ftmp
 	echo "-----------------" >> $Ftmp
 	cat "$Ftmp.Fabric_$i.wwnali" >> $Ftmp
 	echo "" >> $Ftmp
 	echo "" >> $Ftmp
 	rm "$Ftmp.Fabric_$i.wwnali"
+	echo " end"
     fi
 
     if [[ -f "$Ftmp.Fabric_$i.wwnname" ]]
     then
+	echo -n "Check WWN without PortName in Fabric_$i..."
 	echo "WWN without PortName" >> $Ftmp
 	echo "--------------------" >> $Ftmp
 	cat "$Ftmp.Fabric_$i.wwnname" >> $Ftmp
 	echo "" >> $Ftmp
 	echo "" >> $Ftmp
 	rm "$Ftmp.Fabric_$i.wwnname"
+	echo " end"
     fi
 
     if [[ -f "$Ftmp.Fabric_$i.portname" ]]
     then
+	echo -n "Check PortName without WWN in Fabric_$i..."
 	echo "PortName without WWN" >> $Ftmp
 	echo "--------------------" >> $Ftmp
 	cat "$Ftmp.Fabric_$i.portname" >> $Ftmp
 	echo "" >> $Ftmp
 	echo "" >> $Ftmp
 	rm "$Ftmp.Fabric_$i.portname"
+	echo " end"
     fi
 
     if [[ -f "$Ftmp.Fabric_$i.portali" ]]
     then
+	echo -n "Check PortName not equal Alias in Fabric_$i..."
 	echo "PortName not equal Alias" >> $Ftmp
 	echo "------------------------" >> $Ftmp
 	cat "$Ftmp.Fabric_$i.portali" >> $Ftmp
 	echo "" >> $Ftmp
 	echo "" >> $Ftmp
 	rm "$Ftmp.Fabric_$i.portali"
+	echo " end"
     fi
 
     if [[ -f "$Ftmp.Fabric_$i.zone_cfg" ]] && [[ -f "$Ftmp.Fabric_$i.zone" ]]
     then 
-	echo -n "" > "$Ftmp.A"
+	echo -n "Check zones contain non 2 Aliases in Fabric_$i..."
+	
+	echo -n > "$Ftmp.A"
 	
 	index=0
 	while read line; do
@@ -649,14 +662,15 @@ do
 	x=`cat "$Ftmp.A" | wc -l`
 	if [[ $x -gt 0 ]]
 	then 
-	    echo "Zones contain 1 or 3+ Aliases (* run_cfg)" >> $Ftmp
-	    echo "-----------------------------------------" >> $Ftmp
+	    echo "Zones contain NOT 2 Aliases (* run_cfg)" >> $Ftmp
+	    echo "---------------------------------------" >> $Ftmp
 	    cat "$Ftmp.A" >> $Ftmp
 	    echo "" >> $Ftmp
 	    echo "" >> $Ftmp
 	fi
 	
 	rm "$Ftmp.A"
+	echo " end"
     fi
 
     charnum=$( printf "%d" "'${i}" )
@@ -667,6 +681,8 @@ do
 	
 	if [[ -f "$Ftmp.Fabric_$i.alias_cfg" ]] && [[ -f "$Ftmp.Fabric_$ii.alias_cfg" ]]
 	then 
+	    echo -n "Check diff all Aliases in Fabric_$i and Fabric_$ii..."
+	    
 	    sed 's/#/; /g' < "$Ftmp.Fabric_$i.alias_cfg"  > "$Ftmp.A"
 	    sed 's/#/; /g' < "$Ftmp.Fabric_$ii.alias_cfg" > "$Ftmp.B"
 	    diff "$Ftmp.A" "$Ftmp.B" > "$Ftmp.C"
@@ -679,10 +695,14 @@ do
 		echo "" >> $Ftmp
 		echo "" >> $Ftmp
 	    fi
+	    
+	    echo " end"
 	fi
 	
 	if [[ -f "$Ftmp.Fabric_$i.zone_cfg" ]] && [[ -f "$Ftmp.Fabric_$ii.zone_cfg" ]]
 	then 
+	    echo -n "Check diff all Zones in Fabric_$i and Fabric_$ii..."
+	    
 	    sed 's/#/; /g' < "$Ftmp.Fabric_$i.zone_cfg"  > "$Ftmp.A"
 	    sed 's/#/; /g' < "$Ftmp.Fabric_$ii.zone_cfg" > "$Ftmp.B"
 	    diff "$Ftmp.A" "$Ftmp.B" > "$Ftmp.C"
@@ -695,10 +715,14 @@ do
 		echo "" >> $Ftmp
 		echo "" >> $Ftmp
 	    fi
+	    
+	    echo " end"
 	fi
 	
 	if [[ -f "$Ftmp.Fabric_$i.zone_cfg" ]] && [[ -f "$Ftmp.Fabric_$ii.zone_cfg" ]]
 	then 
+	    echo -n "Check diff effective Zones in Fabric_$i and Fabric_$ii..."
+	    
 	    sed 's/#/; /g' < "$Ftmp.Fabric_$i.zone"  > "$Ftmp.A"
 	    sed 's/#/; /g' < "$Ftmp.Fabric_$ii.zone" > "$Ftmp.B"
 	    diff "$Ftmp.A" "$Ftmp.B" > "$Ftmp.C"
@@ -711,6 +735,8 @@ do
 		echo "" >> $Ftmp
 		echo "" >> $Ftmp
 	    fi
+
+	    echo " end"
 	fi
 	
 	if [[ -f "$Ftmp.A" ]]; then rm "$Ftmp.A"; fi
@@ -724,6 +750,8 @@ do
     #storsw.sh - Room,Name+,IP,Firmware+,Capacity,Used,Free,WWNs,Ctrl#+,Ctrl WWPN,Speed,Status+,Encl#+,Status+,Type,PN#,Serial#,Slots,Speed,Encl#+,Bay#+,Status+,Type,Mode,Size,Speed+,PN#,Serial#,Disk Group,Status+,Size,Free,Volume Name,Status+,Size,WWID+,Mapping,Disk Group,Func+,Host Name,Status+,Ports+,WWPN,Mapping
     if [[ -f "$Ftmp.Fabric_$i.port_cfg" ]] && [[ -f "$Ftmp.Fabric_$i.alias_cfg" ]]
     then 
+	echo -n "Check online WWNs only in ONE Fabric_$i..."
+	
 	echo "Online WWNs only in ONE Fabric" >> $Ftmp
 	echo "------------------------------" >> $Ftmp
 
@@ -838,16 +866,20 @@ do
     	    echo "" >> $Ftmp
 	    echo "" >> $Ftmp
 	fi
+
+	echo " end"
     fi
 
     # Make map of Aliases with WWN, online marked ex. =WWN=
     if [[ -f "$Ftmp.Fabric_$i.port_cfg" ]] && [[ -f "$Ftmp.Fabric_$i.alias_cfg" ]]
     then 
-	echo "Online WWN in Alias" >> $Ftmp
-	echo "-------------------" >> $Ftmp
-
+	echo -n "Make map online WWNs in Alias in Fabric_$i..."
+	
 	echo -n > "$Ftmp.Fabric_$i.alias"
 	
+	echo "Online WWNs in Alias" >> $Ftmp
+	echo "--------------------" >> $Ftmp
+
 	while read line; do
 	    x=`echo "$line" | cut -f2`; x=$( trim "$x" )
 	    x="alias: $x"
@@ -883,6 +915,8 @@ do
 	rm "$Ftmp.Fabric_$i.alias"
 	echo "" >> $Ftmp
 	echo "" >> $Ftmp
+
+	echo " end"
     fi
 
     
@@ -901,20 +935,26 @@ do
 	echo "" >> $Fout2
     fi
 
-    index=$((index+1))
+    fab_num=$((fab_num+1))
 done  
+unset Fabric
 
+echo "Post processing:"
 for i in $fab_chars
 do
     if [[ -f "$Ftmp.Fabric_$i" ]]
     then
+	echo -n "Write config of Fabric_$i..."
+	
 	echo "Config of Fabric_$i" >> $Fout2
 	echo "==================" >> $Fout2
 	cat "$Ftmp.Fabric_$i" >> $Fout2
 	echo "" >> $Fout2
 	echo "" >> $Fout2
 	echo "" >> $Fout2
+	
 	rm "$Ftmp.Fabric_$i"
+	echo " end"
     fi
 done  
 
