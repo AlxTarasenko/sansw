@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Version 4.93, as CSV
+# Version 5.3
 #
 # Usage: ./sansw.sh
 #
@@ -14,36 +14,51 @@
 # Rules:
 # 1) Alias need have all WWNs of device, for mirroring configuration on fabrics
 # 2) Alias and PortName (with connected cable) need have same Name
-# 3) All ports need have name: "AliasName" OR "portNN" OR "extNN" OR ""
-# 4) Zone need contain pier-to-pier connection, checking zones with non 2 aliases.
+# 3) All port names need equal "AliasName" OR "portNN" OR "extNN" OR "", not applicable to NPIV
+# 4) Zone need contain pier-to-pier connection, checking zones with not 2 aliases.
 # 5) Support multi Fabric_I (where "I" is char: A,B,C,D,...)
 # 6) Check unused aliases and zones
 # 7) Crosschek WWN, Alias, PortName
 # 8) Make map of Aliases with WWN, online marked ex. =WWN=
-# 9) Checking config for fabric by pair: A-B, C-D, ...
-#    Maked for splited SAN networks (by LSAN, logical isolation and others)
+# 9) Checking config for fabric by pair: A-B, C-D,... Maked for splited SAN networks (by LSAN, logical isolation and others)
 #10) Checking for online WWNs of Host or Storage controller (by storsw_rep.csv) only in ONE Fabric
+#11) For NPIV ports out duplication strings for each WWPN for export to DataBase (sansw_db.csv)
 #
 # 06/2018, Alexey Tarasenko, atarasenko@mail.ru
 #
 #
 # To_Do:
 # 1. exclude LSAN from processing, zonename: lsan_NAME
-# 2. get some info by SNMP, faster?
+# 2. get some info by SNMP. May be faster?
 #
 
 
+source "../lib_sw/lib_main.sh"
+source "../lib_sw/lib_brocade.sh"
+
+
 Fout="sansw_rep.csv";
+FoutDB="sansw_bd.csv";
 FoutXLS="sansw_rep.xls";
+FoutDBXLS="sansw_db.xls";
 Fout2="sansw_rep.txt";
-Ftmp="/tmp/sansw_tmp.txt";
+Ftmp="sansw.tmp";
+curdate=$( date +"%d/%m/%Y %H:%M" )
+
+fab_chars="A B C D E F G H I J K L M N O P Q R S T U V W X Y"
 
 if [[ -f $Ftmp ]]; then rm $Ftmp; fi
 if [[ -f $Fout ]]; then rm $Fout; fi
+if [[ -f $FoutDB ]]; then rm $FoutDB; fi
 if [[ -f $Fout2 ]]; then rm $Fout2; fi
 if [[ -f $FoutXLS ]]; then rm $FoutXLS; fi
+if [[ -f $FoutDBXLS ]]; then rm $FoutDBXLS; fi
 
-fab_chars="A B C D E F G H I J K L M N O P Q R S T U V W X Y"
+if [[ -f "$Ftmp.A" ]]; then rm "$Ftmp.A"; fi
+if [[ -f "$Ftmp.B" ]]; then rm "$Ftmp.B"; fi
+if [[ -f "$Ftmp.C" ]]; then rm "$Ftmp.C"; fi
+if [[ -f "$Ftmp.sfp" ]]; then rm "$Ftmp.sfp"; fi
+if [[ -f "$Ftmp.isl" ]]; then rm "$Ftmp.isl"; fi
 
 index=0
 for i in $fab_chars
@@ -53,6 +68,14 @@ do
     if [[ -f "$Ftmp.Fabric_$i.wwnname" ]]; then rm "$Ftmp.Fabric_$i.wwnname"; fi
     if [[ -f "$Ftmp.Fabric_$i.portali" ]]; then rm "$Ftmp.Fabric_$i.portali"; fi
     if [[ -f "$Ftmp.Fabric_$i.portname" ]]; then rm "$Ftmp.Fabric_$i.portname"; fi
+
+    if [[ -f "$Ftmp.Fabric_$i" ]]; then rm "$Ftmp.Fabric_$i"; fi
+    if [[ -f "$Ftmp.Fabric_$i.zone" ]]; then rm "$Ftmp.Fabric_$i.zone"; fi
+    if [[ -f "$Ftmp.Fabric_$i.alias" ]]; then rm "$Ftmp.Fabric_$i.alias"; fi
+    if [[ -f "$Ftmp.Fabric_$i.zone_cfg" ]]; then rm "$Ftmp.Fabric_$i.zone_cfg"; fi
+    if [[ -f "$Ftmp.Fabric_$i.alias_cfg" ]]; then rm "$Ftmp.Fabric_$i.alias_cfg"; fi
+    if [[ -f "$Ftmp.Fabric_$i.port_cfg" ]]; then rm "$Ftmp.Fabric_$i.port_cfg"; fi
+    if [[ -f "$Ftmp.Fabric_$i.onlyone" ]]; then rm "$Ftmp.Fabric_$i.onlyone"; fi
 done  
 
 index=0
@@ -62,147 +85,9 @@ while read line; do
 done < sansw.lst
 
 
-val2pos() {
-    local string="$1"
-    local delimiter="$2"
-    local value="$3"
-    local index=1
-    if [ -n "$string" ]; then
-        local part
-        while read -d "$delimiter" part; do
-            if [[ "$part" == "$value" ]]; then echo -n $index; break; fi
-            index=$(($index+1))
-        done <<< "$string"
-    fi
-}
-
-                                                                        
-trim() {
-    local var="$*"
-    # remove leading whitespace characters
-    var="${var#"${var%%[![:space:]]*}"}"
-    # remove trailing whitespace characters
-    var="${var%"${var##*[![:space:]]}"}"   
-    echo -n "$var"
-}
-
-
-recomp() {
-    local fout="$1"
-    local key="$2"
-    local index=0
-    while read line; do
-	arrstr[$index]="$line"
-        index=$(($index+1))
-    done < $fout
-
-    echo -n "" > $fout
-
-    local buf=""
-    local s=""
-    local a=0;
-    for ((a=0; a < ${#arrstr[*]}; a++))
-    do
-        s=$( trim "${arrstr[$a]}" )
-        if [[ ${s:0:${#key}} == $key ]]
-        then
-    	    if [[ $buf != ""  ]]; then echo "$buf" | tr ' ' '\t' | tr -s '\t'  >> $fout; fi
-    	    buf=$( trim "$s" )
-        else
-    	    local tmp=( $buf )
-    	    if [[ ${#tmp[@]} -gt 2 ]]; then buf="$buf; $s"; else buf="$buf $s"; fi
-        fi
-    done
-    if [[ $buf != ""  ]]; then echo "$buf" | tr ' ' '\t' | tr -s '\t'  >> $fout; fi
-    unset arrstr
-}
-
-
-swtype() {
-    local var="$*"
-    declare -a matrix
-
-    matrix[1]="Brocade 1000"
-    matrix[2]="Brocade 2010"
-    matrix[3]="Brocade 2400"
-    matrix[4]="Brocade 20x0"
-    matrix[5]="Brocade 22x0"
-    matrix[6]="Brocade 2800"
-    matrix[7]="Brocade 2000"
-    matrix[9]="Brocade 3800"
-    matrix[10]="Brocade 12000"
-    matrix[12]="Brocade 3900"
-    matrix[16]="Brocade 3200"
-    matrix[17]="Brocade 3800VL"
-    matrix[18]="Brocade 3000"
-    matrix[21]="Brocade 24000"
-    matrix[22]="Brocade 3016"
-    matrix[26]="Brocade 3850"
-    matrix[27]="Brocade 3250"
-    matrix[29]="Brocade 4012 Embedded"
-    matrix[32]="Brocade 4100"
-    matrix[33]="Brocade 3014"
-    matrix[34]="Brocade 200E"
-    matrix[37]="Brocade 4020 Embedded"
-    matrix[38]="Brocade 7420 SAN Router"
-    matrix[40]="Brocade FCR Front Domain"
-    matrix[41]="Brocade FCR Xlate Domain"
-    matrix[42]="Brocade 48000 Director"
-    matrix[43]="Brocade 4024 Embedded"
-    matrix[44]="Brocade 4900"
-    matrix[45]="Brocade 4016 Embedded"
-    matrix[46]="Brocade 7500"
-    matrix[51]="Brocade 4018 Embedded"
-    matrix[55]="Brocade 7600"
-    matrix[58]="Brocade 5000"
-    matrix[61]="Brocade 4424 Embedded"
-    matrix[62]="Brocade DCX Backbone"
-    matrix[64]="Brocade 5300"
-    matrix[66]="Brocade 5100"
-    matrix[67]="Brocade Encryption Switch"
-    matrix[69]="Brocade 5410"
-    matrix[70]="Brocade 5410 Embedded"
-    matrix[71]="Brocade 300"
-    matrix[72]="Brocade 5480 Embedded"
-    matrix[73]="Brocade 5470 Embedded"
-    matrix[75]="Brocade 5424 Embedded"
-    matrix[76]="Brocade 8000"
-    matrix[77]="Brocade DCX-4S"
-    matrix[83]="Brocade 7800"
-    matrix[86]="Brocade 5450 Embedded"
-    matrix[87]="Brocade 5460 Embedded"
-    matrix[90]="Brocade 8470 Embedded"
-    matrix[92]="Brocade VA-40FC"
-    matrix[95]="Brocade VDX 6720-24 Data Center"
-    matrix[96]="Brocade VDX 6730-32 Data Center"
-    matrix[97]="Brocade VDX 6720-60 Data Center"
-    matrix[98]="Brocade VDX 6730-76 Data Center"
-    matrix[108]="Dell M8428-k FCoE Embedded"
-    matrix[109]="Brocade 6510"
-    matrix[116]="Brocade VDX 6710 Data Center"
-    matrix[117]="Brocade 6547 Embedded"
-    matrix[118]="Brocade 6505"
-    matrix[120]="Brocade DCX8510-8 Backbone"
-    matrix[121]="Brocade DCX8510-4 Backbone"
-    matrix[133]="Brocade 6520"
-
-    #if [[ ${sw_type:(-2)}==".0" ]]; then sw_type=${sw_type/%".0"/""}; fi
-    var=${var%.*}
-    
-    local res=${matrix[$var]}
-
-    if [[ "$res" == "" ]]
-    then     
-        echo -n "$var"
-    else
-        echo -n "$res"
-    fi
-    
-    unset matrix
-}
-
-
-echo "Room,Fabric+,Switch Name+,Domen+,IP,Switch WWN,Model,Firmware,Serial#,Config,Port#+,Port Name,Speed+,Status,State,Type,WWN,WWPN,Alias,Zone,SFP#+,Wave+,Vendor,Serial#,Speed" > $Fout
+echo "Date&Time  $curdate"
+echo "Date,Room,Fabric+,Switch Name+,Domen+,IP,Switch WWN,Model,Firmware,Serial#,Config,Port#+,Port Name,Speed+,Status,State,Type,Port WWN,Device WWPN,Alias,Zone,SFP#+,Wave+,SFP Vendor,SFP Serial#,SFP Speed" > $Fout
+echo "Date,Room,Fabric+,Switch Name+,Domen+,IP,Switch WWN,Model,Firmware,Serial#,Config,Port#+,Port Name,Speed+,Status,State,Type,Port WWN,Device WWPN,Alias,Zone,SFP#+,Wave+,SFP Vendor,SFP Serial#,SFP Speed" > $FoutDB
 declare -a Fabric
 for ((a=0; a < ${#sansw[*]}; a++))
 do
@@ -284,7 +169,7 @@ do
     	grep -A 5000 "alias:" "$unuse" | grep -B 5000 "Effective" | head -n -2 > $Ftmp
     	recomp "$Ftmp" "alias:"
 	cat "$Ftmp" | tr '\t' ' ' | tr -s ' ' | tr -s ';' | sed -e 's/; /#/g' | tr ' ' '\t' > "$unuse.alias_cfg"
-	#not need sort, switch do it
+	#!not need sort, switch do it
 	#echo -n "" > $Ftmp
 	#while read line; do
 	#    i=`echo "$line" | cut -f1`; i=$( trim "$i" )
@@ -388,6 +273,14 @@ do
 	echo " end"
     fi
 #continue
+    
+    #start switch processing
+    echo -n "Processing $Ffab,$Fname..."
+    
+    part0=",,,"
+    part1=",,,,,,"
+    part2=",,,,,,,,,"
+    part3=",,,,"
 
     eval "$Fcmd \"switchshow\" | head -10 > $Ftmp"
     eval "$Fcmd \"chassisshow\" | grep \"Serial Num:\" | sed 's/^/HW /' >> $Ftmp"
@@ -433,19 +326,13 @@ do
 	sfp[$sfp_id]="$sfp_wave#$sfp_vendor#$sfp_sn#$sfp_speed"
 	#echo "SFP: ${sfp[$sfp_id]}"
     done < "$Ftmp.sfp"
-#continue;
 
     sw_fab="$Ffab"
     sw_room="$Froom"
     sw_name=`grep "switchName:" $Ftmp | cut -d: -f2`; sw_name=$( trim "$sw_name" )
     sw_wwn=`grep "switchWwn:" $Ftmp | sed -e 's/switchWwn:/switchWwn#/g' | cut -d# -f2`; sw_wwn=$( trim "$sw_wwn" )
-
-    part0="$sw_room,$sw_fab,$sw_name"
-    echo -n "Processing $part0..."
     
-    part1=",,,,,,"
-    part2=",,,,,,,,,"
-    part3=",,,,"
+    part0="$curdate,$sw_room,$sw_fab,$sw_name"
 
     sw_dom=`grep "switchDomain:" $Ftmp | cut -d: -f2`; sw_dom=$( trim "$sw_dom" )
     sw_ip="$Fip"
@@ -455,8 +342,9 @@ do
     sw_cfg=`grep "zoning:" $Ftmp | cut -d: -f2`; sw_cfg=$( trim "$sw_cfg" )
 
     echo "$part0,$sw_dom,$sw_ip,$sw_wwn,$sw_type,$sw_os,$sw_sn,$sw_cfg,$part2,$part3" >> $Fout
+    #echo "$part0,$sw_dom,$sw_ip,$sw_wwn,$sw_type,$sw_os,$sw_sn,$sw_cfg,$part2,$part3" >> $FoutDB
 
-
+    
     eval "$Fcmd \"switchshow\" | grep -A 100 \"=========\" | tail -n +2 > $Ftmp"
 
     index=0
@@ -469,6 +357,12 @@ do
     do
 	p_num="$b"
         
+	sfp_num="$p_num"
+	sfp_wave=`echo "${sfp[$p_num]}" | cut -d# -f1`
+	sfp_vendor=`echo "${sfp[$p_num]}" | cut -d# -f2`
+	sfp_sn=`echo "${sfp[$p_num]}" | cut -d# -f3`
+	sfp_speed=`echo "${sfp[$p_num]}" | cut -d# -f4`
+	
         eval "$Fcmd \"portshow $p_num\" > $Ftmp"
         #as key: value
         p_name=`grep "portName:" $Ftmp | cut -d: -f2`; p_name=$( trim "$p_name" )
@@ -485,78 +379,116 @@ do
 	    then p_scn=`grep "portScn:" $Ftmp | tr ' ' '\t' | tr -s '\t' | cut -f6`; p_scn=$( trim "$p_scn" );
     	    else p_scn=`grep "portScn:" $Ftmp | tr ' ' '\t' | tr -s '\t' | cut -f3`; p_scn=$( trim "$p_scn" );
             fi
-        #two strings parse
-        p_wwnd=`grep -A 1 "portWwn of" $Ftmp | tail -1`; p_wwnd=$( trim "$p_wwnd" )
-	#search alias and zone for device WWN
-	p_ali=""
-	p_zone=""
-	if [[ "$p_wwnd" != "" ]]
-	then
-	    Fali="$Ftmp.Fabric_$fab_id"
+        
+        #if port in NPIV: one port may have many WWPN
+        #v1
+        #p_wwpns=`cat $Ftmp | grep -A 20 "portWwn of" | grep -B 20 "Distance:" | tail -n +2 | head -n -1 | tr -d ' '`
+        #v2
+        eval "$Fcmd \"portloginshow $p_num\" > $Ftmp"
+	p_wwpns=`cat $Ftmp | tail -n +3 | tr ' ' '\t' | tr -s '\t' | cut -f4 | sort | uniq`
+	p_wwpnsCount=`echo -n "$p_wwpns" | grep -c '^'`
+	
+    	p_wwpns2=""
+	p_ali2=""
+	p_zone2=""
+	#check if no WWPN, then key-word for start operator "for"
+	if [[ "$p_wwpns" == "" ]]; then p_wwpns="EMPTY"; fi
+	for p_wwnd in $p_wwpns
+	do
+	    # check key-word for no WWPN
+	    if [[ "$p_wwnd" == "EMPTY" ]]; then p_wwnd=""; fi
     	    
-    	    #Aliases
-    	    grep -A 1000 "alias:" "$Fali" | grep -B 1000 "Effective" | head -n -2 > $Ftmp
-    	    recomp "$Ftmp" "alias:"
-    	    #if [[ "$p_num" == "8" ]]; then cat $Ftmp > "ali_test.log"; fi
-    	    #if [[ "$p_num" == "8" ]]; then echo "Search : [$p_wwnd]" >> "ali_test.log"; fi
-    	    #If multiline (1..2) source
-    	    #p_ali=`grep "$p_wwnd" "$Ftmp" | cut -f2`; p_ali=$( trim "$p_ali" )
-	    #if [[ "$p_ali" == "" ]]; then p_ali=`grep -B 1 "$p_wwnd" "$Ftmp" | head -1 | cut -f2`; p_ali=$( trim "$p_ali" ); fi
-	    #If use recomp function
-    	    p_ali=`grep "$p_wwnd" "$Ftmp" | cut -f2 | tr '\n' ';'` 
-    	    if [[ ${p_ali:(-1)} == ";" ]]; then p_ali=${p_ali:0:(${#p_ali}-1)}; fi 
-    	    p_ali=${p_ali//";"/"; "}
-    	    #if [[ "$p_num" == "8" ]]; then echo "Searched : [$p_ali]" >> "ali_test.log"; fi
-
-    	    #Zonnes
-	    grep -A 1000 "Effective configuration:" "$Fali" | head -n -1 | tail -n +3 > $Ftmp
-    	    recomp "$Ftmp" "zone:"
-    	    p_zone=`grep "$p_wwnd" "$Ftmp" | cut -f2 | tr '\n' ';'`
-    	    if [[ ${p_zone:(-1)} == ";" ]]; then p_zone=${p_zone:0:(${#p_zone}-1)}; fi 
-    	    p_zone=${p_zone//";"/"; "}
-	fi
-
-	#check WWN without...
-	if [[ "$p_wwnd" != "" ]]
-	then
-	    #	    
-	    echo "$part0,port${p_num},wwn: ${p_wwnd}" >> "$Ftmp.Fabric_$fab_id.port_cfg"
+    	    p_wwpns2="${p_wwpns2};${p_wwnd}"
 	    
-	    # Alias
-	    if [[ "$p_ali" == "" ]]; then 
-		echo "$part0,port${p_num},wwn: $p_wwnd,name: $p_name">> "$Ftmp.$Ffab.wwnali"
-	    fi
-	    # PortName
-	    if [[ "$p_name" == "" ]] || [[ "$p_name" == "port${p_num}" ]] || [[ "$p_name" == "ext${p_num}" ]]; then 
-		echo "$part0,port${p_num},wwn: $p_wwnd,alias: $p_ali">> "$Ftmp.$Ffab.wwnname"
+	    #search alias and zone for device WWN
+	    p_ali=""
+	    p_zone=""
+	    if [[ "$p_wwnd" != "" ]]
+	    then
+		Fali="$Ftmp.Fabric_$fab_id"
+    	    
+    		#Aliases
+    		grep -A 1000 "alias:" "$Fali" | grep -B 1000 "Effective" | head -n -2 > $Ftmp
+    		recomp "$Ftmp" "alias:"
+    		p_ali=`grep "$p_wwnd" "$Ftmp" | cut -f2 | tr '\n' ';'`
+    		p_ali2="${p_ali2};${p_ali}"
+    	        if [[ ${p_ali:(-1)} == ";" ]]; then p_ali=${p_ali:0:(${#p_ali}-1)}; fi 
+    	        p_ali=${p_ali//";"/"; "}
+
+    		#Zonnes
+		grep -A 1000 "Effective configuration:" "$Fali" | head -n -1 | tail -n +3 > $Ftmp
+    		recomp "$Ftmp" "zone:"
+    		p_zone=`grep "$p_wwnd" "$Ftmp" | cut -f2 | tr '\n' ';'`
+    		p_zone2="${p_zone2};${p_zone}"
+    		if [[ ${p_zone:(-1)} == ";" ]]; then p_zone=${p_zone:0:(${#p_zone}-1)}; fi 
+    		p_zone=${p_zone//";"/"; "}
 	    fi
 
-	    # PortName not equal Alias
-	    if [[ "$p_ali" != "" ]] && [[ "$p_name" != "" ]] && [[ "$p_name" != "port${p_num}" ]] && [[ "$p_name" != "ext${p_num}" ]]; then 
-		if [[ "$p_name" != "$p_ali" ]]; then echo "$part0,port${p_num},wwn: $p_wwnd,name: $p_name,alias: $p_ali">> "$Ftmp.$Ffab.portali"
+	    #check WWN without...
+	    if [[ "$p_wwnd" != "" ]]
+	    then
+		#	    
+		echo "$part0,port${p_num},wwn: ${p_wwnd}" >> "$Ftmp.Fabric_$fab_id.port_cfg"
+	    
+		# Alias
+		if [[ "$p_ali" == "" ]]; then 
+		    echo "$part0,port${p_num},wwn: $p_wwnd,name: $p_name" >> "$Ftmp.$Ffab.wwnali"
+		fi
+		# PortName
+		if [[ "$p_name" == "" ]] || [[ "$p_name" == "port${p_num}" ]] || [[ "$p_name" == "ext${p_num}" ]]; then 
+		    echo "$part0,port${p_num},wwn: $p_wwnd,alias: $p_ali" >> "$Ftmp.$Ffab.wwnname"
+		fi
+
+		# PortName not equal Alias, for <=1 to exclude NPIV
+		if [[ $p_wwpnsCount -le 1 ]]; then
+		    if [[ "$p_ali" != "" ]] && [[ "$p_name" != "" ]] && [[ "$p_name" != "port${p_num}" ]] && [[ "$p_name" != "ext${p_num}" ]]; then 
+			if [[ "$p_name" != "$p_ali" ]]; then
+			    echo "$part0,port${p_num},wwn: $p_wwnd,name: $p_name,alias: $p_ali" >> "$Ftmp.$Ffab.portali"
+			fi
+		    fi
 		fi
 	    fi
-	fi
 
-	# if ISL port, set WWND as ISL description
-	if [[ "${isl[$p_num]}" != "" ]] && [[ "$p_wwnd" == "" ]]; then p_wwnd="${isl[$p_num]}"; fi
-	
-	#check PortName without...
-	if [[ "$p_wwnd" == "" ]]
-	then
-	    # WWN
-	    if [[ "$p_name" != "port${p_num}" ]] && [[ "$p_name" != "ext${p_num}" ]]; then 
-		echo "$part0,port${p_num},name: $p_name">> "$Ftmp.$Ffab.portname"
+	    #check PortName without... (and not ISL port)
+	    if [[ "$p_wwnd" == "" ]] && [[ "${isl[$p_num]}" == "" ]]; then
+		# WWN
+		if [[ "$p_name" != "port${p_num}" ]] && [[ "$p_name" != "ext${p_num}" ]]; then 
+		    echo "$part0,port${p_num},name: $p_name" >> "$Ftmp.$Ffab.portname"
+		fi
 	    fi
-	fi
 
-	sfp_num="$b"
-	sfp_wave=`echo "${sfp[$p_num]}" | cut -d# -f1`
-	sfp_vendor=`echo "${sfp[$p_num]}" | cut -d# -f2`
-	sfp_sn=`echo "${sfp[$p_num]}" | cut -d# -f3`
-	sfp_speed=`echo "${sfp[$p_num]}" | cut -d# -f4`
+	    #out multi strings with each of WWPNs
+	    echo "$part0,$part1,$p_num,$p_name,$p_speed,$p_state,$p_phys,$p_scn,$p_wwn,$p_wwnd,$p_ali,$p_zone,$sfp_num,$sfp_wave,$sfp_vendor,$sfp_sn,$sfp_speed" >> $FoutDB
+	done
 	
-	echo "$part0,$part1,$p_num,$p_name,$p_speed,$p_state,$p_phys,$p_scn,$p_wwn,$p_wwnd,$p_ali,$p_zone,$sfp_num,$sfp_wave,$sfp_vendor,$sfp_sn,$sfp_speed" >> $Fout
+	#out one string, with list of WWPNs
+	if [[ "$p_wwpns2" != "" ]]
+	then 
+    	    p_wwpns2=${p_wwpns2//";;"/";"}
+    	    if [[ ${p_wwpns2:0:1} == ";" ]]; then p_wwpns2=${p_wwpns2:1:${#p_wwpns2}}; fi 
+    	    if [[ ${p_wwpns2:(-1)} == ";" ]]; then p_wwpns2=${p_wwpns2:0:(${#p_wwpns2}-1)}; fi 
+    	    p_wwpns2=${p_wwpns2//";"/"; "}
+	fi
+	if [[ "$p_ali2" != "" ]]
+	then
+    	    p_ali2=${p_ali2//";;"/";"}
+    	    if [[ ${p_ali2:0:1} == ";" ]]; then p_ali2=${p_ali2:1:${#p_ali2}}; fi 
+    	    if [[ ${p_ali2:(-1)} == ";" ]]; then p_ali2=${p_ali2:0:(${#p_ali2}-1)}; fi 
+    	    p_ali2=${p_ali2//";"/"; "}
+	fi
+	if [[ "$p_zone2" != "" ]]
+	then
+    	    p_zone2=${p_zone2//";;"/";"}
+    	    if [[ ${p_zone2:0:1} == ";" ]]; then p_zone2=${p_zone2:1:${#p_zone2}}; fi 
+    	    if [[ ${p_zone2:(-1)} == ";" ]]; then p_zone2=${p_zone2:0:(${#p_zone2}-1)}; fi 
+    	    p_zone2=${p_zone2//";"/"; "}
+	fi
+	
+	# if ISL port, set as ISL description
+	if [[ "${isl[$p_num]}" != "" ]] && [[ "$p_wwpns2" == "" ]]; then p_wwpns2="${isl[$p_num]}"; fi
+	
+	#out one string
+	echo "$part0,$part1,$p_num,$p_name,$p_speed,$p_state,$p_phys,$p_scn,$p_wwn,$p_wwpns2,$p_ali2,$p_zone2,$sfp_num,$sfp_wave,$sfp_vendor,$sfp_sn,$sfp_speed" >> $Fout
     done
     unset isl
     unset sfp
@@ -638,7 +570,7 @@ do
 
     if [[ -f "$Ftmp.Fabric_$i.zone_cfg" ]] && [[ -f "$Ftmp.Fabric_$i.zone" ]]
     then 
-	echo -n "Check zones contain non 2 Aliases in Fabric_$i..."
+	echo -n "Check zones contain not 2 Aliases in Fabric_$i..."
 	
 	echo -n > "$Ftmp.A"
 	
@@ -662,8 +594,8 @@ do
 	x=`cat "$Ftmp.A" | wc -l`
 	if [[ $x -gt 0 ]]
 	then 
-	    echo "Zones contain NOT 2 Aliases (* run_cfg)" >> $Ftmp
-	    echo "---------------------------------------" >> $Ftmp
+	    echo "Zones contain NOT 2 Aliases (* if active)" >> $Ftmp
+	    echo "-----------------------------------------" >> $Ftmp
 	    cat "$Ftmp.A" >> $Ftmp
 	    echo "" >> $Ftmp
 	    echo "" >> $Ftmp
@@ -747,7 +679,9 @@ do
     fi
 
     # Check online WWNs of ONE controller
-    #storsw.sh - Room,Name+,IP,Firmware+,Capacity,Used,Free,WWNs,Ctrl#+,Ctrl WWPN,Speed,Status+,Encl#+,Status+,Type,PN#,Serial#,Slots,Speed,Encl#+,Bay#+,Status+,Type,Mode,Size,Speed+,PN#,Serial#,Disk Group,Status+,Size,Free,Volume Name,Status+,Size,WWID+,Mapping,Disk Group,Func+,Host Name,Status+,Ports+,WWPN,Mapping
+    #storsw.sh - Date,Room,Name+,IP,Firmware+,Capacity-,Used-,Free-,WWN,Ctrl#+,Ctrl WWPN,Ctrl Speed+,Ctrl Status+,Encl#+,Encl Status+,Encl Type,Encl PN#,Encl Serial#,Slots,Bkpl Speed,
+    #            Disk Encl#+,Disk Bay#+,Disk Status+,Disk Type,Disk Mode,Disk Size,Disk Speed+,Disk PN#,Disk Serial#,Disk Group,DG Status+,DG Size,DG Free,
+    #            Volume Name,Vol Status+,Vol Size,Volume WWID+,Volume Mapping,Vol DG,Func+,Host Name,Host Status+,Ports+,Device WWPN,Host Mapping
     if [[ -f "$Ftmp.Fabric_$i.port_cfg" ]] && [[ -f "$Ftmp.Fabric_$i.alias_cfg" ]]
     then 
 	echo -n "Check online WWNs only in ONE Fabric_$i..."
@@ -963,20 +897,23 @@ then
     echo -n "Converting report file CSV to XLS..."
     eval "../csv2xls/csv2xls.pl $Fout $FoutXLS"
     echo " end"
+    echo -n "Converting report file CSV for DataBase to XLS..."
+    eval "../csv2xls/csv2xls.pl $FoutDB $FoutDBXLS"
+    echo " end"
 fi
 
 if [[ -f "../smb/smbupload.sh" ]]
 then
     echo "Upload to Inventory share.."
-    eval "../smb/smbupload.sh sansw $Fout $FoutXLS $Fout2"
+    eval "../smb/smbupload.sh sansw $Fout $FoutDB $FoutXLS $FoutDBXLS $Fout2"
     echo "..end"
 fi
 
 if [[ -f "../csv2mysql/csv2mysql.pl" ]]
 then
-    # Room,Fabric+,Switch Name+,Domen+,IP,Switch WWN,Model,Firmware,Serial#,Config,Port#+,Port Name,Speed+,Status,State,Type,WWN,WWPN,Alias,Zone,SFP#+,Wave+,Vendor,Serial#,Speed
+    # Date,Room,Fabric+,Switch Name+,Domen+,IP,Switch WWN,Model,Firmware,Serial#,Config,Port#+,Port Name,Speed+,Status,State,Type,Port WWN,Device WWPN,Alias,Zone,SFP#+,Wave+,SFP Vendor,SFP Serial#,SFP Speed
     echo "Upload to MySQL base.."
-    eval "../csv2mysql/csv2mysql.pl sansw_rep.csv san \"Switch Name+,Port#+,WWN,Wave+,Speed,WWPN,Alias\" \"swname,pnum,wwn,wave,speed,wwpn,host\""
+    eval "../csv2mysql/csv2mysql.pl $FoutDB san \"Date,Switch Name+,Port#+,Port WWN,Wave+,SFP Speed,Device WWPN,Alias\" \"date,swname,pnum,wwn,wave,speed,wwpn,host\""
     echo "..end"
 fi
 
@@ -1075,4 +1012,3 @@ if [[ -f "$Ftmp.isl" ]]; then rm "$Ftmp.isl"; fi
     #$oid = ".1.3.6.1.4.1.1588.2.1.1.1.1.7.0";     
 ###
 
-exit;
